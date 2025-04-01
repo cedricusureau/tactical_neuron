@@ -12,9 +12,12 @@ sys.path.insert(0, str(root_dir))
 
 # Imports du jeu
 from src.game.systems.game_manager import GameManager
+from src.ai.models.neural_controller import CharacterAI
+# Optionnel: pour les modèles spécialisés
+from src.ai.models.class_neural_controller import ClassCharacterAI
 
 
-def main(ai_mode=False, model_path=None):
+def main(ai_mode=False, warrior_model=None, mage_model=None, specialized=False):
     # Initialisation de Pygame
     pygame.init()
 
@@ -42,8 +45,8 @@ def main(ai_mode=False, model_path=None):
     # Créer le gestionnaire de jeu
     game_manager = GameManager(config)
 
-    # Configurer une nouvelle partie
-    game_manager.setup_game(ai_mode=ai_mode, model_path=model_path)
+    # Configurer une nouvelle partie avec les modèles IA
+    game_manager.setup_game(ai_mode=ai_mode, warrior_model=warrior_model, mage_model=mage_model, specialized=specialized)
 
     # Boucle principale
     while game_manager.running:
@@ -68,8 +71,10 @@ def main(ai_mode=False, model_path=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tactical Grid Game")
     parser.add_argument("--ai", action="store_true", help="Activer le mode IA")
-    parser.add_argument("--model", type=str, help="Chemin vers un modèle IA préentraîné")
+    parser.add_argument("--warrior-model", type=str, help="Chemin vers un modèle IA pour le guerrier")
+    parser.add_argument("--mage-model", type=str, help="Chemin vers un modèle IA pour le mage")
+    parser.add_argument("--specialized", action="store_true", help="Utiliser les modèles spécialisés par classe")
 
     args = parser.parse_args()
 
-    main(ai_mode=args.ai, model_path=args.model)
+    main(ai_mode=args.ai, warrior_model=args.warrior_model, mage_model=args.mage_model, specialized=args.specialized)

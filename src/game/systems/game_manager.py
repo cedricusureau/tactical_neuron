@@ -5,8 +5,9 @@ from ..entities.character import Character
 from .turn_system import TurnSystem
 from .spell_system import SpellSystem
 from ...ai.models.neural_controller import CharacterAI
+from ...ai.models.class_neural_controller import ClassCharacterAI
 import os
-
+from src.ai.utils.state_encoder import default_encoder
 
 class GameManager:
     """
@@ -51,36 +52,50 @@ class GameManager:
             "info_bg": (240, 240, 240)
         }
 
-    def setup_game(self, ai_mode=False, model_path=None):
-        """Configure une nouvelle partie"""
-        # Créer le personnage du joueur
-        player = Character("Joueur", "warrior", 1, 1, team=0)
-        self.spell_system.assign_default_spells(player)
+    def setup_game(self, ai_mode=False, warrior_model=None, mage_model=None, specialized=False):
+        """Configure une nouvelle partie avec possibilité de modèles IA spécifiques par classe"""
+        # Créer le personnage guerrier
+        warrior = Character("Guerrier", "warrior", 1, 1, team=0)
+        self.spell_system.assign_default_spells(warrior)
 
-        # Configuration de l'IA si demandé
+        # Créer le personnage mage
+        mage = Character("Mage", "mage", self.board_width - 2, self.board_height - 2, team=1)
+        self.spell_system.assign_default_spells(mage)
+
+        # Configuration des IA
         if ai_mode:
-            ai_controller = CharacterAI()
-            # Charger un modèle préentraîné si disponible
-            if model_path and os.path.exists(model_path):
+            # Utiliser la taille d'état standardisée
+            warrior_state_size = default_encoder.state_size
+            mage_state_size = default_encoder.state_size
+
+            warrior_action_size = 5 + len(warrior.spells)  # 4 directions + passer + sorts
+            mage_action_size = 5 + len(mage.spells)
+
+            # Charger le modèle du mage
+            if mage_model and os.path.exists(mage_model):
                 try:
-                    ai_controller.load_model(model_path)
-                    print(f"Modèle IA chargé: {model_path}")
+                    # Utiliser la taille correcte (46 au lieu de 50)
+                    mage_state_size = 46  # Taille utilisée pendant l'entraînement
+                    mage_action_size = 5 + len(mage.spells)  # 4 directions + passer + sorts
+
+                    # Créer et charger l'IA appropriée
+                    if specialized:
+                        mage_ai = ClassCharacterAI(mage_state_size, 128, mage_action_size, "mage")
+                    else:
+                        mage_ai = CharacterAI(mage_state_size, 128, mage_action_size)
+
+                    mage_ai.load_model(mage_model)
+                    mage.set_ai_controller(mage_ai)
+                    print(f"Modèle mage chargé: {mage_model}")
                 except Exception as e:
-                    print(f"Erreur lors du chargement du modèle: {e}")
-                    ai_mode = False
+                    print(f"Erreur lors du chargement du modèle mage: {e}")
 
-            player.set_ai_controller(ai_controller)
-            player.name = "IA Player"
+        # Ajouter les personnages au jeu
+        self.turn_system.add_character(warrior)
+        self.board.add_character(warrior)
 
-        # Ajouter le personnage au jeu
-        self.turn_system.add_character(player)
-        self.board.add_character(player)
-
-        # Ajouter un ennemi pour tester
-        enemy = Character("Ennemi", "mage", self.board_width - 2, self.board_height - 2, team=1)
-        self.spell_system.assign_default_spells(enemy)
-        self.turn_system.add_character(enemy)
-        self.board.add_character(enemy)
+        self.turn_system.add_character(mage)
+        self.board.add_character(mage)
 
         print(f"Jeu initialisé: Mode {'IA' if ai_mode else 'manuel'}")
 

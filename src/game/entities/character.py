@@ -1,4 +1,6 @@
 # src/game/entities/character.py
+import torch
+from src.ai.utils.state_encoder import default_encoder
 
 class Character:
     def __init__(self, name, character_class, x, y, team=0):
@@ -95,7 +97,6 @@ class Character:
         # Appliquer la défense (réduction simple des dégâts)
         actual_damage = max(1, amount - self.defense // 2)
         self.health = max(0, self.health - actual_damage)
-        print(f"{self.name} prend {actual_damage} points de dégâts ! PV restants: {self.health}/{self.max_health}")
         return self.is_dead()
 
     def heal(self, amount):
@@ -103,22 +104,20 @@ class Character:
         old_health = self.health
         self.health = min(self.max_health, self.health + amount)
         heal_amount = self.health - old_health
-        print(f"{self.name} récupère {heal_amount} points de vie ! PV: {self.health}/{self.max_health}")
 
     def is_dead(self):
         """Vérifie si le personnage est mort"""
         return self.health <= 0
 
+    from src.ai.utils.state_encoder import default_encoder
+
     def get_next_ai_move(self, board):
-        """
-        Obtient le prochain mouvement décidé par l'IA
-        Retourne (new_x, new_y) ou None si pas de mouvement
-        """
+        """Obtient le prochain mouvement décidé par l'IA"""
         if not self.ai_controlled or not self.ai_controller:
             return None
 
-        # Obtenir l'état actuel du jeu
-        state = self.ai_controller.get_state(self, board)
+        # Utiliser l'encodeur global pour générer l'état
+        state = default_encoder.encode(self, board)
 
         # Sélectionner une action
         action = self.ai_controller.select_action(state)

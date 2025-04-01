@@ -39,10 +39,8 @@ class GridBoard:
 
     def move_character(self, character, new_x, new_y):
         """Déplace un personnage vers une nouvelle position"""
-        print(f"Tentative de déplacement de {character.name} vers ({new_x}, {new_y})")
 
         if not self.is_valid_position(new_x, new_y) or not self.is_cell_empty(new_x, new_y):
-            print("Position invalide ou cellule occupée")
             return False
 
         # Calculer la distance pour vérifier les PM
@@ -51,7 +49,6 @@ class GridBoard:
         distance = dx + dy
 
         if distance > character.movement_points:
-            print(f"Mouvement impossible: distance {distance} > PM {character.movement_points}")
             return False
 
         # Effacer l'ancienne position
@@ -67,8 +64,6 @@ class GridBoard:
 
         # Déduire les points de mouvement
         character.movement_points -= distance
-        print(
-            f"Déplacement effectué: ({old_x}, {old_y}) -> ({new_x}, {new_y}), PM restants: {character.movement_points}")
 
         return True
 
@@ -113,5 +108,4 @@ class GridBoard:
                     if self.is_valid_position(nx, ny) and (nx, ny) not in visited:
                         queue.append((nx, ny, dist + 1))
 
-        print(f"Mouvements possibles: {len(possible_moves)}")
         return possible_moves
