@@ -113,7 +113,7 @@ class Character:
 
     def get_next_ai_move(self, board):
         """Obtient le prochain mouvement décidé par l'IA"""
-        if not self.ai_controlled or not self.ai_controller:
+        if not self.ai_controller:
             return None
 
         # Utiliser l'encodeur global pour générer l'état
@@ -122,5 +122,26 @@ class Character:
         # Sélectionner une action
         action = self.ai_controller.select_action(state)
 
-        # Convertir l'action en mouvement
-        return self.ai_controller.action_to_move(action, self, board)
+        # Si l'action est un mouvement (0-3), la convertir en coordonnées
+        if action < 4:  # Mouvement: haut, droite, bas, gauche
+            dx = [0, 1, 0, -1][action]
+            dy = [-1, 0, 1, 0][action]
+            new_x, new_y = self.x + dx, self.y + dy
+
+            # Vérifier si le mouvement est valide
+            if board.is_valid_position(new_x, new_y) and board.is_cell_empty(new_x, new_y):
+                return (new_x, new_y)
+
+        # Si l'action est 4 (ne rien faire) ou un sort (5+), forcer un déplacement si possible
+        if self.movement_points > 0:
+            # Essayer chaque direction pour trouver un mouvement valide
+            for direction in range(4):
+                dx = [0, 1, 0, -1][direction]
+                dy = [-1, 0, 1, 0][direction]
+                new_x, new_y = self.x + dx, self.y + dy
+
+                if board.is_valid_position(new_x, new_y) and board.is_cell_empty(new_x, new_y):
+                    return (new_x, new_y)
+
+        # Si aucun mouvement n'est possible ou si l'action n'est pas un déplacement
+        return None

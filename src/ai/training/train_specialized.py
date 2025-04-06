@@ -1,4 +1,4 @@
-# src/ai/training/train_duel.py
+# src/ai/training/train_specialized.py
 import os
 import torch
 import torch.nn as nn
@@ -11,45 +11,49 @@ import argparse
 import time
 
 from .duel_environment import DuelEnvironment
-from ..models.neural_controller import CharacterAI
+from ..models.class_neural_controller import ClassCharacterAI
+from src.ai.utils.state_encoder import default_encoder
 
 
-def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_size=64,
-                      gamma=0.95, epsilon_start=1.0, epsilon_end=0.1, epsilon_decay=0.995,
-                      target_update=10, memory_size=10000, board_width=10, board_height=10):
+def train_specialized_agents(episodes=1000, max_steps=100, batch_size=64,
+                             gamma=0.95, epsilon_start=1.0, epsilon_end=0.1,
+                             epsilon_decay=0.995, save_interval=100):
     """
-    Entraîne deux agents (guerrier et mage) par reinforcement learning en les faisant s'affronter
+    Fonction simplifiée pour entraîner des agents spécialisés qui s'affrontent
     """
-    # Créer l'environnement de duel
-    env = DuelEnvironment(board_width, board_height, max_steps)
+    # Créer l'environnement
+    env = DuelEnvironment()
+    print("Environnement d'entraînement initialisé")
 
-    # Réinitialiser pour obtenir la taille des états et actions
+    # Réinitialiser pour configurer
     initial_state = env.reset()
 
-    # Créer les agents
-    warrior_state_size = len(initial_state["warrior"])
-    mage_state_size = len(initial_state["mage"])
-
+    # Taille de l'état et de l'espace d'action
+    state_size = default_encoder.state_size
     warrior_action_size = env.get_action_space_size("warrior")
     mage_action_size = env.get_action_space_size("mage")
 
-    warrior_agent = CharacterAI(warrior_state_size, 128, warrior_action_size)
-    mage_agent = CharacterAI(mage_state_size, 128, mage_action_size)
+    print(f"Taille d'état: {state_size}")
+    print(f"Actions guerrier: {warrior_action_size}, Actions mage: {mage_action_size}")
+
+    # Créer les agents spécialisés
+    warrior_agent = ClassCharacterAI(state_size, 128, warrior_action_size, "warrior")
+    mage_agent = ClassCharacterAI(state_size, 128, mage_action_size, "mage")
 
     # Créer les réseaux cibles (pour stabiliser l'apprentissage)
-    warrior_target = CharacterAI(warrior_state_size, 128, warrior_action_size)
+    warrior_target = ClassCharacterAI(state_size, 128, warrior_action_size, "warrior")
     warrior_target.model.load_state_dict(warrior_agent.model.state_dict())
     warrior_target.model.eval()
 
-    mage_target = CharacterAI(mage_state_size, 128, mage_action_size)
+    mage_target = ClassCharacterAI(state_size, 128, mage_action_size, "mage")
     mage_target.model.load_state_dict(mage_agent.model.state_dict())
     mage_target.model.eval()
 
-    # Mémoires d'expérience pour chaque agent
+    # Mémoires d'expérience
     warrior_memory = []
     mage_memory = []
 
-    # Métriques de suivi
+    # Métriques
     warrior_rewards = []
     mage_rewards = []
     episode_lengths = []
@@ -63,10 +67,10 @@ def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_s
 
     # Dossier pour sauvegarder les modèles
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = os.path.join("data", "models", f"duel_training_{timestamp}")
+    model_dir = os.path.join("data", "models", f"specialized_duel_{timestamp}")
     os.makedirs(model_dir, exist_ok=True)
 
-    print(f"Début de l'entraînement en duel - {episodes} épisodes")
+    print(f"Début de l'entraînement - {episodes} épisodes")
 
     # Boucle d'entraînement
     for episode in tqdm(range(episodes)):
@@ -78,44 +82,33 @@ def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_s
         warrior_episode_reward = 0
         mage_episode_reward = 0
         done = False
-        steps = 0
 
-        # Historique des expériences de cet épisode
-        warrior_episode_memory = []
-        mage_episode_memory = []
-
-        # Déroulement d'un épisode
-        while not done and steps < max_steps:
-            steps += 1
-
+        # Boucle d'un épisode
+        while not done and env.current_step < max_steps:
             # Déterminer qui joue ce tour
             current_character = env.turn_system.get_current_character()
             current_type = "warrior" if current_character == env.warrior else "mage"
 
-            # Préparer les actions des deux joueurs
+            # Actions pour les deux joueurs
             actions = {}
 
-            # Sélectionner l'action du guerrier s'il est actif
+            # Sélectionner l'action du joueur actif
             if current_type == "warrior":
                 if np.random.random() < warrior_epsilon:
                     # Exploration
                     actions["warrior"] = np.random.randint(0, warrior_action_size)
                 else:
                     # Exploitation
-                    with torch.no_grad():
-                        q_values = warrior_agent.model(torch.FloatTensor(warrior_state))
-                        actions["warrior"] = torch.argmax(q_values).item()
-
-            # Sélectionner l'action du mage s'il est actif
-            elif current_type == "mage":
+                    actions["warrior"] = warrior_agent.select_action(
+                        torch.FloatTensor(warrior_state), is_training=True)
+            else:  # mage
                 if np.random.random() < mage_epsilon:
                     # Exploration
                     actions["mage"] = np.random.randint(0, mage_action_size)
                 else:
                     # Exploitation
-                    with torch.no_grad():
-                        q_values = mage_agent.model(torch.FloatTensor(mage_state))
-                        actions["mage"] = torch.argmax(q_values).item()
+                    actions["mage"] = mage_agent.select_action(
+                        torch.FloatTensor(mage_state), is_training=True)
 
             # Exécuter l'action
             next_state, rewards, done = env.step(actions)
@@ -130,24 +123,21 @@ def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_s
 
             # Stocker l'expérience
             if current_type == "warrior":
-                warrior_episode_memory.append(
+                warrior_memory.append(
                     (warrior_state, actions["warrior"], warrior_reward, warrior_next_state, done))
-            elif current_type == "mage":
-                mage_episode_memory.append((mage_state, actions["mage"], mage_reward, mage_next_state, done))
+            else:  # mage
+                mage_memory.append(
+                    (mage_state, actions["mage"], mage_reward, mage_next_state, done))
+
+            # Limiter la taille des mémoires
+            if len(warrior_memory) > 10000:
+                warrior_memory = warrior_memory[-10000:]
+            if len(mage_memory) > 10000:
+                mage_memory = mage_memory[-10000:]
 
             # Mettre à jour les états
             warrior_state = warrior_next_state
             mage_state = mage_next_state
-
-        # Fin de l'épisode - ajouter toutes les expériences aux mémoires respectives
-        warrior_memory.extend(warrior_episode_memory)
-        mage_memory.extend(mage_episode_memory)
-
-        # Limiter la taille des mémoires
-        if len(warrior_memory) > memory_size:
-            warrior_memory = warrior_memory[-memory_size:]
-        if len(mage_memory) > memory_size:
-            mage_memory = mage_memory[-memory_size:]
 
         # Entraîner les agents si assez d'exemples
         if len(warrior_memory) >= batch_size:
@@ -157,7 +147,7 @@ def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_s
             train_agent(mage_agent, mage_target, mage_memory, batch_size, gamma)
 
         # Mettre à jour les réseaux cibles périodiquement
-        if episode % target_update == 0:
+        if episode % 10 == 0:
             warrior_target.model.load_state_dict(warrior_agent.model.state_dict())
             mage_target.model.load_state_dict(mage_agent.model.state_dict())
 
@@ -168,22 +158,18 @@ def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_s
         # Enregistrer les métriques
         warrior_rewards.append(warrior_episode_reward)
         mage_rewards.append(mage_episode_reward)
-        episode_lengths.append(steps)
+        episode_lengths.append(env.current_step)
 
         # Déterminer le vainqueur
         if env.warrior.is_dead() and not env.mage.is_dead():
             mage_wins += 1
         elif env.mage.is_dead() and not env.warrior.is_dead():
             warrior_wins += 1
-        elif env.mage.is_dead() and env.warrior.is_dead():
-            # Les deux sont morts (peu probable, mais possible)
-            draws += 1
-        elif steps >= max_steps:
-            # Match nul par limite de tours
+        elif env.mage.is_dead() and env.warrior.is_dead() or env.current_step >= max_steps:
             draws += 1
 
         # Sauvegarder périodiquement les modèles
-        if (episode + 1) % 100 == 0 or episode == episodes - 1:
+        if (episode + 1) % save_interval == 0 or episode == episodes - 1:
             # Sauvegarder les modèles
             warrior_path = os.path.join(model_dir, f"warrior_model_ep{episode + 1}.pt")
             mage_path = os.path.join(model_dir, f"mage_model_ep{episode + 1}.pt")
@@ -236,7 +222,7 @@ def train_duel_agents(episodes=1000, max_steps=100, learning_rate=0.001, batch_s
     print(f"Guerrier: {warrior_final_path}")
     print(f"Mage: {mage_final_path}")
 
-    return warrior_agent, mage_agent
+    return warrior_agent, mage_agent, warrior_final_path, mage_final_path
 
 
 def train_agent(agent, target_network, memory, batch_size, gamma):
@@ -260,8 +246,6 @@ def train_agent(agent, target_network, memory, batch_size, gamma):
 
     # Calculer les valeurs Q cibles (sans gradient)
     with torch.no_grad():
-        # Double DQN: utiliser le réseau principal pour choisir l'action
-        # et le réseau cible pour estimer sa valeur
         next_actions = agent.model(next_states).argmax(1, keepdim=True)
         target_q = target_network.model(next_states).gather(1, next_actions)
         target_q = rewards + gamma * target_q * (1 - dones)
@@ -280,9 +264,9 @@ def train_agent(agent, target_network, memory, batch_size, gamma):
     agent.optimizer.step()
 
 
-def evaluate_duel(warrior_model_path, mage_model_path, num_episodes=100, render=True, delay=0.5):
+def evaluate_duel(warrior_model_path, mage_model_path, num_episodes=10, render=True, delay=0.5):
     """
-    Évalue les agents entraînés en les faisant s'affronter
+    Évalue les agents spécialisés entraînés en les faisant s'affronter
     """
     # Créer l'environnement
     env = DuelEnvironment()
@@ -290,15 +274,14 @@ def evaluate_duel(warrior_model_path, mage_model_path, num_episodes=100, render=
     # Réinitialiser pour obtenir la taille des états et actions
     initial_state = env.reset()
 
-    # Charger les agents
-    warrior_state_size = len(initial_state["warrior"])
-    mage_state_size = len(initial_state["mage"])
-
+    # Taille de l'état et de l'espace d'action
+    state_size = default_encoder.state_size
     warrior_action_size = env.get_action_space_size("warrior")
     mage_action_size = env.get_action_space_size("mage")
 
-    warrior_agent = CharacterAI(warrior_state_size, 128, warrior_action_size)
-    mage_agent = CharacterAI(mage_state_size, 128, mage_action_size)
+    # Charger les agents spécialisés
+    warrior_agent = ClassCharacterAI(state_size, 128, warrior_action_size, "warrior")
+    mage_agent = ClassCharacterAI(state_size, 128, mage_action_size, "mage")
 
     warrior_agent.load_model(warrior_model_path)
     mage_agent.load_model(mage_model_path)
@@ -335,15 +318,11 @@ def evaluate_duel(warrior_model_path, mage_model_path, num_episodes=100, render=
 
             # Action du guerrier
             if current_type == "warrior":
-                with torch.no_grad():
-                    q_values = warrior_agent.model(torch.FloatTensor(warrior_state))
-                    actions["warrior"] = torch.argmax(q_values).item()
+                actions["warrior"] = warrior_agent.select_action(torch.FloatTensor(warrior_state))
 
             # Action du mage
             elif current_type == "mage":
-                with torch.no_grad():
-                    q_values = mage_agent.model(torch.FloatTensor(mage_state))
-                    actions["mage"] = torch.argmax(q_values).item()
+                actions["mage"] = mage_agent.select_action(torch.FloatTensor(mage_state))
 
             # Afficher l'action
             action_names = ["haut", "droite", "bas", "gauche", "attendre"]
@@ -401,24 +380,37 @@ def evaluate_duel(warrior_model_path, mage_model_path, num_episodes=100, render=
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Entraînement en duel pour le jeu tactique")
+    parser = argparse.ArgumentParser(description="Entraînement et évaluation d'agents spécialisés")
     parser.add_argument("--train", action="store_true", help="Entraîner les agents")
     parser.add_argument("--evaluate", action="store_true", help="Évaluer les agents")
     parser.add_argument("--warrior-model", type=str, help="Chemin vers le modèle du guerrier")
     parser.add_argument("--mage-model", type=str, help="Chemin vers le modèle du mage")
     parser.add_argument("--episodes", type=int, default=1000, help="Nombre d'épisodes d'entraînement")
-    parser.add_argument("--eval-episodes", type=int, default=100, help="Nombre d'épisodes d'évaluation")
+    parser.add_argument("--eval-episodes", type=int, default=10, help="Nombre d'épisodes d'évaluation")
     parser.add_argument("--no-render", action="store_true", help="Désactiver l'affichage lors de l'évaluation")
     parser.add_argument("--delay", type=float, default=0.5, help="Délai entre les actions lors de l'évaluation")
 
     args = parser.parse_args()
 
     if args.train:
-        train_duel_agents(episodes=args.episodes)
+        warrior_agent, mage_agent, warrior_path, mage_path = train_specialized_agents(episodes=args.episodes)
+
+        # Si entraînement suivi d'évaluation
+        if args.evaluate:
+            evaluate_duel(
+                warrior_model_path=warrior_path,
+                mage_model_path=mage_path,
+                num_episodes=args.eval_episodes,
+                render=not args.no_render,
+                delay=args.delay
+            )
     elif args.evaluate and args.warrior_model and args.mage_model:
-        evaluate_duel(args.warrior_model, args.mage_model,
-                      num_episodes=args.eval_episodes,
-                      render=not args.no_render,
-                      delay=args.delay)
+        evaluate_duel(
+            warrior_model_path=args.warrior_model,
+            mage_model_path=args.mage_model,
+            num_episodes=args.eval_episodes,
+            render=not args.no_render,
+            delay=args.delay
+        )
     else:
         parser.print_help()

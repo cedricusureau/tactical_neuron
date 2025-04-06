@@ -4,7 +4,6 @@ from ..board.grid_board import GridBoard
 from ..entities.character import Character
 from .turn_system import TurnSystem
 from .spell_system import SpellSystem
-from ...ai.models.neural_controller import CharacterAI
 from ...ai.models.class_neural_controller import ClassCharacterAI
 import os
 from src.ai.utils.state_encoder import default_encoder
@@ -52,8 +51,8 @@ class GameManager:
             "info_bg": (240, 240, 240)
         }
 
-    def setup_game(self, ai_mode=False, warrior_model=None, mage_model=None, specialized=False):
-        """Configure une nouvelle partie avec possibilité de modèles IA spécifiques par classe"""
+    def setup_game(self, ai_mode=False, warrior_model=None, mage_model=None, specialized=True):
+        """Configure une nouvelle partie avec modèles IA spécifiques par classe"""
         # Créer le personnage guerrier
         warrior = Character("Guerrier", "warrior", 1, 1, team=0)
         self.spell_system.assign_default_spells(warrior)
@@ -65,25 +64,27 @@ class GameManager:
         # Configuration des IA
         if ai_mode:
             # Utiliser la taille d'état standardisée
-            warrior_state_size = default_encoder.state_size
-            mage_state_size = default_encoder.state_size
+            state_size = default_encoder.state_size
 
             warrior_action_size = 5 + len(warrior.spells)  # 4 directions + passer + sorts
             mage_action_size = 5 + len(mage.spells)
 
-            # Charger le modèle du mage
+            # Charger le modèle du guerrier si fourni
+            if warrior_model and os.path.exists(warrior_model):
+                try:
+                    # Créer et charger l'IA spécialisée pour le guerrier
+                    warrior_ai = ClassCharacterAI(state_size, 128, warrior_action_size, "warrior")
+                    warrior_ai.load_model(warrior_model)
+                    warrior.set_ai_controller(warrior_ai)
+                    print(f"Modèle guerrier chargé: {warrior_model}")
+                except Exception as e:
+                    print(f"Erreur lors du chargement du modèle guerrier: {e}")
+
+            # Charger le modèle du mage si fourni
             if mage_model and os.path.exists(mage_model):
                 try:
-                    # Utiliser la taille correcte (46 au lieu de 50)
-                    mage_state_size = 46  # Taille utilisée pendant l'entraînement
-                    mage_action_size = 5 + len(mage.spells)  # 4 directions + passer + sorts
-
-                    # Créer et charger l'IA appropriée
-                    if specialized:
-                        mage_ai = ClassCharacterAI(mage_state_size, 128, mage_action_size, "mage")
-                    else:
-                        mage_ai = CharacterAI(mage_state_size, 128, mage_action_size)
-
+                    # Créer et charger l'IA spécialisée pour le mage
+                    mage_ai = ClassCharacterAI(state_size, 128, mage_action_size, "mage")
                     mage_ai.load_model(mage_model)
                     mage.set_ai_controller(mage_ai)
                     print(f"Modèle mage chargé: {mage_model}")
@@ -173,7 +174,7 @@ class GameManager:
                                 self.selected_character = None
                                 self.possible_moves = []
 
-        # Gestion des touches clavier (toujours disponible, même en mode IA)
+        # Gestion des touches clavier
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
                 # Fin du tour
@@ -192,69 +193,87 @@ class GameManager:
                     self.selected_character = None
                     self.possible_moves = []
 
-            elif event.key == pygame.K_a and current_character:
-                # Activer/désactiver le mode IA pour le personnage actuel
-                if current_character.ai_controlled:
-                    current_character.disable_ai()
-                    print(f"{current_character.name} est maintenant contrôlé manuellement")
-                else:
-                    # Créer un contrôleur IA si nécessaire
-                    if not current_character.ai_controller:
-                        current_character.set_ai_controller(CharacterAI())
-                    else:
-                        current_character.ai_controlled = True
-                    print(f"{current_character.name} est maintenant contrôlé par l'IA")
-
     def update(self):
         """Met à jour l'état du jeu"""
         # Contrôle IA
         current_character = self.turn_system.get_current_character()
-        if current_character and current_character.ai_controlled:
+        if current_character and current_character.ai_controller:
             self.ai_delay += 1
 
             # Ajouter un délai pour que l'action de l'IA ne soit pas trop rapide
             if self.ai_delay >= 30:  # Environ 0.5 seconde à 60 FPS
                 self.ai_delay = 0
 
-                # IA simple : d'abord essayer de lancer un sort, puis bouger si possible
+                # Activer le contrôle par IA si un contrôleur est disponible
+                current_character.ai_controlled = True
 
-                # 1. Essayer de lancer un sort si des points d'action sont disponibles
+                # Variable pour suivre si l'IA a effectué une action
+                action_taken = False
+
+                # 1. D'abord essayer de lancer un sort pour attaquer
                 if current_character.action_points > 0:
-                    # Parcourir tous les sorts disponibles
-                    for spell_index, spell in enumerate(current_character.spells):
-                        if spell.can_cast(current_character):
-                            # Trouver des cibles valides
-                            targets = spell.get_valid_targets(current_character, self.board)
-                            if targets:
-                                # Choisir la première cible (simple)
-                                target_x, target_y = targets[0]
-                                if current_character.cast_spell(spell_index, target_x, target_y, self.board):
-                                    print(
-                                        f"IA: {current_character.name} lance {spell.name} sur ({target_x}, {target_y})")
-                                    # Vérifier si des personnages sont morts
-                                    self.spell_system.check_for_casualties()
-                                    break  # Sortir après avoir lancé un sort
+                    # Priorité aux sorts d'attaque
+                    attack_spells = [i for i, spell in enumerate(current_character.spells)
+                                     if spell.can_cast(current_character) and spell.damage > 0]
 
-                # 2. Essayer de se déplacer si des points de mouvement sont disponibles
+                    if attack_spells:
+                        for spell_index in attack_spells:
+                            spell = current_character.spells[spell_index]
+                            targets = spell.get_valid_targets(current_character, self.board)
+
+                            if targets:
+                                # Trouver l'ennemi (personnage d'une équipe différente)
+                                enemies = [char for char in self.board.characters if
+                                           char.team != current_character.team]
+                                if enemies:
+                                    enemy = enemies[0]
+                                    # Cibler l'ennemi
+                                    best_target = min(targets,
+                                                      key=lambda pos: abs(pos[0] - enemy.x) + abs(pos[1] - enemy.y))
+                                    if current_character.cast_spell(spell_index, best_target[0], best_target[1],
+                                                                    self.board):
+                                        action_taken = True
+                                        print(
+                                            f"IA: {current_character.name} lance {spell.name} sur ({best_target[0]}, {best_target[1]})")
+                                        self.spell_system.check_for_casualties()
+                                        break
+
+                # 2. Essayer de lancer un sort de soin si nécessaire
+                if not action_taken and current_character.action_points > 0 and current_character.health < current_character.max_health * 0.7:
+                    healing_spells = [i for i, spell in enumerate(current_character.spells)
+                                      if spell.can_cast(current_character) and spell.healing > 0]
+
+                    if healing_spells:
+                        for spell_index in healing_spells:
+                            spell = current_character.spells[spell_index]
+                            targets = spell.get_valid_targets(current_character, self.board)
+
+                            if targets:
+                                # Se cibler soi-même pour le soin
+                                if current_character.cast_spell(spell_index, current_character.x, current_character.y,
+                                                                self.board):
+                                    action_taken = True
+                                    print(f"IA: {current_character.name} se soigne avec {spell.name}")
+                                    break
+
+                # 3. Se déplacer (même si on a déjà lancé un sort)
                 if current_character.movement_points > 0:
                     move = current_character.get_next_ai_move(self.board)
 
                     if move:
                         new_x, new_y = move
-                        # Déplacer le personnage
-                        self.board.move_character(current_character, new_x, new_y)
-                        print(f"IA: {current_character.name} se déplace vers ({new_x}, {new_y})")
-                    else:
-                        # Si l'IA ne peut pas/ne veut pas bouger ou lancer de sort, passer au tour suivant
-                        self.turn_system.next_turn()
-                        print(f"IA: {current_character.name} termine son tour")
-                else:
-                    # Si plus de PM et plus de PA utile, passer au tour suivant
+                        if self.board.move_character(current_character, new_x, new_y):
+                            action_taken = True
+                            print(f"IA: {current_character.name} se déplace vers ({new_x}, {new_y})")
+
+                # 4. Si aucune action n'a été prise et qu'on n'a plus de points ou pas d'action intéressante, terminer le tour
+                if not action_taken or (
+                        current_character.movement_points == 0 and current_character.action_points == 0):
                     self.turn_system.next_turn()
                     print(f"IA: {current_character.name} termine son tour")
 
-        # Vérifier si la partie est terminée (tous les personnages d'une équipe sont morts)
-        self.check_game_end()
+            # Vérifier si la partie est terminée (tous les personnages d'une équipe sont morts)
+            self.check_game_end()
 
     def check_game_end(self):
         """Vérifie si la partie est terminée"""
@@ -400,9 +419,9 @@ class GameManager:
             screen.blit(stats_surface, (10, self.board_height * self.cell_size + 40))
 
             # Instructions
-            help_text = "Clic: Sélectionner/Déplacer | 1-9: Sélectionner sort | Espace: Fin du tour | A: Activer/Désactiver IA"
+            help_text = "Clic: Sélectionner/Déplacer | 1-9: Sélectionner sort | Espace: Fin du tour"
             help_surface = font.render(help_text, True, self.colors["black"])
             screen.blit(help_surface, (10, self.board_height * self.cell_size + 70))
 
-            # Afficher l'interface des sorts
+        # Afficher l'interface des sorts
         self.spell_system.render_spell_ui(screen)
