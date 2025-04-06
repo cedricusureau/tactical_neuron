@@ -403,11 +403,12 @@ if __name__ == "__main__":
     parser.add_argument("--eval-episodes", type=int, default=5, help="Nombre d'épisodes d'évaluation")
     parser.add_argument("--no-render", action="store_true", help="Désactiver l'affichage lors de l'évaluation")
     parser.add_argument("--delay", type=float, default=0.5, help="Délai entre les actions lors de l'évaluation")
+    parser.add_argument("--save-interval", type=int, default=100, help="Intervalle pour sauvegarder les modèles")
 
     args = parser.parse_args()
 
     if args.train:
-        agents, model_paths = train_team_agents(episodes=args.episodes)
+        agents, model_paths = train_team_agents(episodes=args.episodes, save_interval=args.save_interval)
 
         # Si entraînement suivi d'évaluation
         if args.evaluate:

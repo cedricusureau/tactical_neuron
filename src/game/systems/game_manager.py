@@ -7,6 +7,7 @@ from .spell_system import SpellSystem
 from ...ai.models.class_neural_controller import ClassCharacterAI
 import os
 from src.ai.utils.state_encoder import default_encoder
+import random
 
 class GameManager:
     """
@@ -34,6 +35,10 @@ class GameManager:
 
         # Chargement des ressources
         self.init_colors()
+
+        # Ajouter ces lignes dans la méthode __init__ de GameManager
+        self.team0 = []  # Équipe du joueur
+        self.team1 = []  # Équipe ennemie
 
     def init_colors(self):
         """Initialise les couleurs utilisées dans le jeu"""
@@ -425,3 +430,159 @@ class GameManager:
 
         # Afficher l'interface des sorts
         self.spell_system.render_spell_ui(screen)
+
+    # Ajoutez cette méthode à votre classe GameManager dans src/game/systems/game_manager.py
+
+    def setup_team_game(self, models=None, ai_mode=False):
+        """Configure une nouvelle partie en mode équipe (3v3) avec des modèles IA pour chaque classe"""
+        if models is None:
+            models = {}
+
+        # Récupérer les informations des modèles
+        model_info = find_latest_team_models_info()
+
+        # Classes disponibles
+        available_classes = ["warrior", "mage", "archer"]
+
+        # Sélectionner aléatoirement 3 classes pour chaque équipe
+        team0_classes = random.choices(available_classes, k=3)
+        team1_classes = random.choices(available_classes, k=3)
+
+        print(f"Équipe 0: {team0_classes}")
+        print(f"Équipe 1: {team1_classes}")
+
+        # Créer les personnages de l'équipe 0 (joueur)
+        self.team0 = []
+        for i, char_class in enumerate(team0_classes):
+            # Positionner dans la partie gauche du plateau
+            x = random.randint(1, self.board_width // 3 - 1)
+            y = random.randint(1 + i * 3, 3 + i * 3)  # Répartir verticalement
+
+            character = Character(f"Team0_{char_class}_{i}", char_class, x, y, team=0)
+            self.spell_system.assign_default_spells(character)
+            self.board.add_character(character)
+            self.turn_system.add_character(character)
+            self.team0.append(character)
+
+            # Configurer l'IA si le modèle est disponible
+            if ai_mode and char_class in models:
+                state_size = default_encoder.state_size
+                action_size = 5 + len(character.spells)  # 4 directions + attendre + sorts
+
+                # Utiliser les dimensions du modèle chargé si disponibles
+                if char_class in model_info:
+                    info = model_info[char_class]
+                    state_size = info.get('input_size', state_size)
+                    hidden_size = info.get('hidden_size', 128)
+                    action_size = info.get('output_size', action_size)
+                else:
+                    hidden_size = 128
+
+                try:
+                    ai = ClassCharacterAI(state_size, hidden_size, action_size, char_class)
+                    ai.load_model(models[char_class])
+                    character.set_ai_controller(ai)
+                    print(f"IA chargée pour {char_class} de l'équipe 0")
+                except Exception as e:
+                    print(f"Erreur lors du chargement du modèle {char_class} pour l'équipe 0: {e}")
+
+        # Créer les personnages de l'équipe 1 (ennemie)
+        self.team1 = []
+        for i, char_class in enumerate(team1_classes):
+            # Positionner dans la partie droite du plateau
+            x = random.randint(self.board_width * 2 // 3, self.board_width - 2)
+            y = random.randint(1 + i * 3, 3 + i * 3)  # Répartir verticalement
+
+            character = Character(f"Team1_{char_class}_{i}", char_class, x, y, team=1)
+            self.spell_system.assign_default_spells(character)
+            self.board.add_character(character)
+            self.turn_system.add_character(character)
+            self.team1.append(character)
+
+            # Configurer l'IA si le modèle est disponible
+            if ai_mode and char_class in models:
+                state_size = default_encoder.state_size
+                action_size = 5 + len(character.spells)
+
+                # Utiliser les dimensions du modèle chargé si disponibles
+                if char_class in model_info:
+                    info = model_info[char_class]
+                    state_size = info.get('input_size', state_size)
+                    hidden_size = info.get('hidden_size', 128)
+                    action_size = info.get('output_size', action_size)
+                else:
+                    hidden_size = 128
+
+                try:
+                    ai = ClassCharacterAI(state_size, hidden_size, action_size, char_class)
+                    ai.load_model(models[char_class])
+                    character.set_ai_controller(ai)
+                    print(f"IA chargée pour {char_class} de l'équipe 1")
+                except Exception as e:
+                    print(f"Erreur lors du chargement du modèle {char_class} pour l'équipe 1: {e}")
+
+        print(f"Jeu en mode équipe initialisé: Mode {'IA' if ai_mode else 'manuel'}")
+
+
+def find_latest_team_models_info():
+    """Trouve les modèles d'équipe les plus récents et renvoie leurs informations"""
+    from pathlib import Path
+    import os
+    import glob
+    import torch
+
+    root_dir = Path(__file__).parent.parent.parent
+    models_dir = os.path.join(root_dir, "data", "models")
+
+    # Vérifier si le dossier existe
+    if not os.path.exists(models_dir):
+        print("Dossier de modèles introuvable")
+        return {}
+
+    # Trouver les dossiers d'entraînement
+    training_dirs = glob.glob(os.path.join(models_dir, "team_training_*"))
+    if not training_dirs:
+        training_dirs = glob.glob(os.path.join(models_dir, "specialized_duel_*"))
+        if not training_dirs:
+            print("Aucun dossier d'entraînement trouvé")
+            return {}
+
+    # Trouver le dossier le plus récent
+    latest_dir = max(training_dirs)
+    print(f"Dossier de modèles le plus récent: {latest_dir}")
+
+    # Récupérer les informations sur les modèles
+    model_info = {}
+
+    for model_type in ["warrior", "mage", "archer"]:
+        model_path = os.path.join(latest_dir, f"{model_type}_model_final.pt")
+        if os.path.exists(model_path):
+            try:
+                checkpoint = torch.load(model_path)
+                # Extraire les informations de dimensions
+                input_size = checkpoint.get('input_size', 25)
+                hidden_size = checkpoint.get('hidden_size', 128)
+                output_size = checkpoint.get('output_size', None)
+
+                # Si output_size n'est pas sauvegardé, essayer de le déduire du modèle
+                if output_size is None:
+                    state_dict = checkpoint['model_state_dict']
+                    if 'fc3.weight' in state_dict:
+                        output_size = state_dict['fc3.weight'].size(0)
+                    elif 'output.weight' in state_dict:
+                        output_size = state_dict['output.weight'].size(0)
+                    else:
+                        # Valeur par défaut si on ne peut pas déterminer
+                        output_size = 5
+
+                model_info[model_type] = {
+                    'path': model_path,
+                    'input_size': input_size,
+                    'hidden_size': hidden_size,
+                    'output_size': output_size
+                }
+                print(f"Informations du modèle {model_type}: in={input_size}, hidden={hidden_size}, out={output_size}")
+            except Exception as e:
+                print(f"Erreur lors de l'analyse du modèle {model_type}: {str(e)}")
+
+    return model_info

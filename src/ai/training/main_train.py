@@ -44,7 +44,7 @@ def main():
                         help="Chemin vers le modèle du mage pour l'évaluation")
     parser.add_argument("--no-render", action="store_true",
                         help="Désactiver l'affichage pendant l'évaluation")
-    parser.add_argument("--delay", type=float, default=0.5,
+    parser.add_argument("--delay", type=float, default=0,
                         help="Délai entre les actions lors de l'évaluation (en secondes)")
 
     args = parser.parse_args()
